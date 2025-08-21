@@ -56,6 +56,7 @@ const createMockSettings = (
       path: '/workspace/settings.json',
     },
     [],
+    true,
   );
 
 vi.mock('../contexts/SettingsContext.js', async () => {
