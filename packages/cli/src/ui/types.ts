@@ -120,6 +120,7 @@ export type HistoryItemAbout = HistoryItemBase & {
   selectedAuthType: string;
   gcpProject: string;
   ideClient: string;
+  userTier?: string;
 };
 
 export type HistoryItemHelp = HistoryItemBase & {

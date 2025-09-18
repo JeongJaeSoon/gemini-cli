@@ -22,6 +22,24 @@ export class ProjectIdRequiredError extends Error {
   }
 }
 
+export class ProjectAccessError extends Error {
+  constructor(projectId: string, details?: string) {
+    super(
+      `Failed to access GCP project "${projectId}" for Gemini Code Assist.\n` +
+        `${details || ''}\n` +
+        `Please verify:\n` +
+        `1. The project ID is correct\n` +
+        `2. You have the necessary permissions for this project\n` +
+        `3. The Gemini for Cloud API is enabled for this project\n` +
+        `\n` +
+        `To use a different project:\n` +
+        `  export GOOGLE_CLOUD_PROJECT=<your-project-id>\n` +
+        `\n` +
+        `To use Free Tier instead, run /auth and select "Login with Google"`,
+    );
+  }
+}
+
 export interface UserData {
   projectId: string;
   userTier: UserTierId;
@@ -41,17 +59,38 @@ export async function setupUser(client: OAuth2Client): Promise<UserData> {
     pluginType: 'GEMINI',
   };
 
-  const loadRes = await caServer.loadCodeAssist({
-    cloudaicompanionProject: projectId,
-    metadata: {
-      ...coreClientMetadata,
-      duetProject: projectId,
-    },
-  });
+  let loadRes: LoadCodeAssistResponse;
+  try {
+    loadRes = await caServer.loadCodeAssist({
+      cloudaicompanionProject: projectId,
+      metadata: {
+        ...coreClientMetadata,
+        duetProject: projectId,
+      },
+    });
+  } catch (error) {
+    // If loading failed with a project, it means the user doesn't have access
+    if (projectId) {
+      throw new ProjectAccessError(
+        projectId,
+        error instanceof Error ? error.message : 'Authentication failed',
+      );
+    }
+    throw error;
+  }
 
   if (loadRes.currentTier) {
     if (!loadRes.cloudaicompanionProject) {
       if (projectId) {
+        // Check if this is a valid scenario or a project access issue
+        // If user has a tier but no cloudaicompanionProject with projectId set,
+        // it might indicate the project is not properly configured for GCA
+        if (loadRes.currentTier.id !== UserTierId.FREE) {
+          throw new ProjectAccessError(
+            projectId,
+            'The project exists but is not configured for Gemini Code Assist',
+          );
+        }
         return {
           projectId,
           userTier: loadRes.currentTier.id,
@@ -87,14 +126,36 @@ export async function setupUser(client: OAuth2Client): Promise<UserData> {
   }
 
   // Poll onboardUser until long running operation is complete.
-  let lroRes = await caServer.onboardUser(onboardReq);
-  while (!lroRes.done) {
-    await new Promise((f) => setTimeout(f, 5000));
+  let lroRes;
+  try {
     lroRes = await caServer.onboardUser(onboardReq);
+    while (!lroRes.done) {
+      await new Promise((f) => setTimeout(f, 5000));
+      lroRes = await caServer.onboardUser(onboardReq);
+    }
+  } catch (error) {
+    // If onboarding failed with a project, it's likely an access issue
+    if (projectId && tier.id !== UserTierId.FREE) {
+      throw new ProjectAccessError(
+        projectId,
+        `Failed to onboard to Gemini Code Assist: ${
+          error instanceof Error ? error.message : 'Unknown error'
+        }`,
+      );
+    }
+    throw error;
   }
 
   if (!lroRes.response?.cloudaicompanionProject?.id) {
     if (projectId) {
+      // If we have a project but onboarding didn't return one for non-free tier,
+      // it's likely a configuration issue
+      if (tier.id !== UserTierId.FREE) {
+        throw new ProjectAccessError(
+          projectId,
+          'Failed to complete Gemini Code Assist setup with this project',
+        );
+      }
       return {
         projectId,
         userTier: tier.id,

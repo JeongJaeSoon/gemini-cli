@@ -31,6 +31,7 @@ export const aboutCommand: SlashCommand = {
       context.services.settings.merged.security?.auth?.selectedType || '';
     const gcpProject = process.env['GOOGLE_CLOUD_PROJECT'] || '';
     const ideClient = await getIdeClientName(context);
+    const userTier = context.services.config?.getUserTier();
 
     const aboutItem: Omit<HistoryItemAbout, 'id'> = {
       type: MessageType.ABOUT,
@@ -41,6 +42,7 @@ export const aboutCommand: SlashCommand = {
       selectedAuthType,
       gcpProject,
       ideClient,
+      userTier,
     };
 
     context.ui.addItem(aboutItem, Date.now());
